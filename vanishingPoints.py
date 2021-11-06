@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 import math
 
-img = cv2.imread('twoVanPnts.jpg')
+img = cv2.imread('corridoio2.jpg')
 imgOrig = img.copy()
 gray = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
 
@@ -78,11 +78,15 @@ if lines is not None and len(lines) > 0:
                     m2 = (ln2[3] - ln2[1]) / (ln2[2] - ln2[0])
                     q2 = ln2[1] - m2 * ln2[0]
             
-                    xint = (q1-q2) / (m2-m1)
-                    yint = m1 * xint + q1
+                    if m2-m1 != 0.0: 
+                        xint = (q1-q2) / (m2-m1)
+                        yint = m1 * xint + q1
+                    else:
+                        xint = np.inf
+                        yint = np.inf
             #print(xint,yint)
                     if not math.isnan(xint) and not math.isnan(yint) and not math.isinf(xint) and not math.isinf(yint):
-                        img = cv2.circle(img, (round(xint),round(yint)), radius = 2, color = (255,0,0), thickness = -1)
+                        img = cv2.circle(img, (round(xint),round(yint)), radius = 1, color = (255,0,0), thickness = -1)
                         intersections.append(np.array([xint, yint]))
             #repLines.append(clusterLines[minLine])
         
@@ -95,11 +99,86 @@ if lines is not None and len(lines) > 0:
     cv2.imwrite("intersections.jpg", img)
     
 #TODO: filter away non-reliable results (good luck with that!!!)
+    windows = []
+    imgShape = gray.shape 
+    winSize = int(min(imgShape) / 10)
+    #print(winSize)
+    for intersection in intersections:
+        # xmin = intersection[0] - winSize if intersection[0] - winSize > 0.0  else 0.0
+        # ymin = intersection[1] - winSize if intersection[1] - winSize > 0.0 else 0.0
+        # xmax = intersection[0] + winSize if intersection[0] + winSize < imgShape[0] else imgShape[0]
+        # ymax = intersection[1] + winSize if intersection[1] + winSize < imgShape[1] else imgShape[1]
+        xmin = intersection[0] - winSize #if intersection[0] - winSize > 0.0  else 0.0
+        ymin = intersection[1] - winSize #if intersection[1] - winSize > 0.0 else 0.0
+        xmax = intersection[0] + winSize #if intersection[0] + winSize < imgShape[0] else imgShape[0]
+        ymax = intersection[1] + winSize #if intersection[1] + winSize < imgShape[1] else imgShape[1]
+        windows.append([xmin, ymin, xmax, ymax])
+        #windows.append([xmax, ymax, xmin, ymin])
+    
+    intersectionVoting = np.zeros(len(intersections))
+    #WARNING: there is somethin wrong with this part of code:
+        #Apparently the coordinates of the intersections are not meant to be used as a index for a matrix (image)
+    histImage = np.zeros(gray.shape)
+    for intersection in intersections:
+        xIntHist = int(intersection[0]) 
+        yIntHist = int(intersection[1])
+        
+        #TODO: find a good way to set points where they should be
+        if xIntHist < histImage.shape[1] and xIntHist > 0 and yIntHist < histImage.shape[0] and yIntHist > 0:
+        # xIntHist = xIntHist if xIntHist < img.shape[0] else img.shape[0] - 1
+        # yIntHist = yIntHist if yIntHist < img.shape[1] else img.shape[1] - 1
+        # xIntHist = xIntHist if xIntHist > 0 else 0
+        # yIntHist = yIntHist if yIntHist > 0 else 0
+        
+            #print(xIntHist, yIntHist)
+        
+            #histImage[xIntHist, yIntHist] =+255
+            histImage[yIntHist,xIntHist] =+255
+    
+    for wndIdx in range(len(windows)):
+        xMin1 = int(np.floor(windows[wndIdx][0]))
+        xMax1 = int(np.floor(windows[wndIdx][2]))
+        yMin1 = int(np.floor(windows[wndIdx][1]))
+        yMax1 = int(np.floor(windows[wndIdx][3]))
+        
+        #print(xMin1,xMax1,yMin1,yMin1)
+        
+        #if abs(xMax1 - xMin1) != 0 and abs(yMax1 - yMin1) != 0:   
+            #print(wndIdx)
+            #print(range(xMin1,xMax1))
+            #print(range(yMin1,yMax1))
+        #print(histImage[xMin1:xMax1,yMin1:yMax1])
+        if len(histImage[xMin1:xMax1,yMin1:yMax1]) != 0:
+            intersectionVoting[wndIdx] = sum(sum(histImage[int(np.floor(windows[wndIdx][0])):int(np.floor(windows[wndIdx][2])),int(np.floor(windows[wndIdx][1])):int(np.floor(windows[wndIdx][3]))]))
+        else:
+            intersectionVoting[wndIdx] = 0
+    cv2.imwrite("histImage.jpg", histImage)
+    cv2.imwrite("histImageSum.jpg", histImage + gray)
     
     
-    #TODO: use the distance between points as a score of the goodness of the point as a vanishing point
+    # for interIdx in range(len(intersections)):
+    #     for windIdx in range(len(windows)):
+    #         if intersections[interIdx][0] < windows[windIdx][2] and intersections[interIdx][0] > windows[windIdx][0] and intersections[interIdx][1] < windows[windIdx][2] and intersections[interIdx][1] > windows[windIdx][1]:
+    #             intersectionVoting[windIdx] += 1.0
     
+    #print(intersectionVoting.argmax(max(intersectionVoting)))
+    #print(np.argmax(intersectionVoting))
+    amIntVot = np.argmax(intersectionVoting)
+    
+    print(windows[amIntVot])
+    win = windows[amIntVot]
+    
+    cpwind = imgOrig.copy()
+    
+    cpwind[int(win[0]):int(win[2]),int(win[1]):int(win[3]),0] = 255
+    cpwind[int(win[0]):int(win[2]),int(win[1]):int(win[3]),1] = 255
+    cpwind[int(win[0]):int(win[2]),int(win[1]):int(win[3]),2] = 255
+    cv2.imwrite("bestWin.jpg", cpwind)
     
     
 else:
     print("No lines found!!!")
+    
+#TODO: use genetic algorithms to estimate the parameter involved in the vanishing points algorithm
+#TODO: find a good fitness function
+#TODO: Refactor required
