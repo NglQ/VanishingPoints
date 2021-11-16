@@ -10,7 +10,8 @@ import math
     #4) use genetic algorithms to estimate the parameter involved in the vanishing points algorithm
         #4.1) find a good fitness function
     #5) Refactor required
-    
+    #6) Use dynamic programming to find the intersections
+    #7) Find a way to detect more than one Vanishing point
 
 def readImage(pathToImage):
     img = cv2.imread(pathToImage)
@@ -30,6 +31,7 @@ def preprocessing(gray):
 def detectLines(edges):
     data = []
     lines = cv2.HoughLinesP(edges,rho = 1,theta = np.pi/180,threshold = 50,minLineLength=14,maxLineGap=300)
+
     if lines is not None and len(lines) > 0:
         for i in range(len(lines)):
             for x1,y1,x2,y2 in lines[i]:
@@ -41,45 +43,48 @@ def detectLines(edges):
     data = np.array(data, dtype=np.float32)
     return lines, data
 
-def clustering(data,nClusters):
-    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 20, 1.0)
-    ret, label, center = cv2.kmeans(data, nClusters, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
-    return ret, label, center
+def getLineParameters(ln):
+    m = (ln[3] - ln[1]) / (ln[2] - ln[0])
+    q = ln[1] - m * ln[0]
+    return m,q
 
-def detectIntersections(nClusters, label, center, data, lines, img, imgOrig):
+def intersect(q1, q2, m1, m2):
+    xint = (q1-q2) / (m2-m1)
+    yint = m1 * xint + q1
+    return xint, yint
+
+def detectIntersections(lines, img, imgOrig):
     intersections = []
     
-    for i in range(nClusters):
-        clusterIdx = (label == i)
-        clusterLines = lines[clusterIdx]
-        
-        if center[i][1] < 0.984807753 or center[i][1] > -0.984807753: 
-            for li1 in range(len(clusterLines)):
-                ln1 = clusterLines[li1]
-                m1 = (ln1[3] - ln1[1]) / (ln1[2] - ln1[0]) 
-                q1 = ln1[1] - m1 * ln1[0]
-                for li2 in range(li1,len(clusterLines)):
-                    ln2 = clusterLines[li2]
-                    m2 = (ln2[3] - ln2[1]) / (ln2[2] - ln2[0])
-                    q2 = ln2[1] - m2 * ln2[0]
+    #print(lines)
+    
+    for i in range(len(lines)):
+        ln1 = lines[i][0]
+        #print(lines[i])
+        if ln1[2] - ln1[0] != 0.0:            
+            m1, q1 = getLineParameters(ln1)
             
-                    if m2-m1 != 0.0: 
-                        xint = (q1-q2) / (m2-m1)
-                        yint = m1 * xint + q1
-                    else:
-                        xint = np.inf
-                        yint = np.inf
-                    if not math.isnan(xint) and not math.isnan(yint) and not math.isinf(xint) and not math.isinf(yint):
-                        img = cv2.circle(img, (round(xint),round(yint)), radius = 1, color = (255,0,0), thickness = -1)
-                        intersections.append(np.array([xint, yint]))
-        
-        imgTemp = imgOrig.copy()
-        for cll in clusterLines:
-            cv2.line(imgTemp,(cll[0],cll[1]),(cll[2],cll[3]),(0,0,255),2)
-        cv2.imwrite('houghlinesCls'+  str(i) +'.jpg',imgTemp)
+            if math.sin(m1) < 0.984807753 and math.sin(m1) > -0.984807753:
+            
+                for j in range(i,len(lines)):
+                    ln2 = lines[j][0]
+                    
+                    if ln2[2] - ln2[0] != 0.0:
+                    
+                        m2, q2 = getLineParameters(ln2)
+                        
+                        if m2-m1 != 0.0 and math.sin(m2) < 0.984807753 and math.sin(m2) > -0.984807753:                       
+                            xint, yint = intersect(q1, q2, m1, m2)
+                        else:
+                            xint = np.inf
+                            yint = np.inf
+                        if not math.isnan(xint) and not math.isnan(yint) and not math.isinf(xint) and not math.isinf(yint):
+                            img = cv2.circle(img, (round(xint),round(yint)), radius = 1, color = (255,0,0), thickness = -1)
+                            intersections.append(np.array([xint, yint]))
             
     cv2.imwrite("intersections.jpg", img)
     return intersections
+
 
 def detectWindows(gray,intersections):
     windows = []
@@ -111,8 +116,8 @@ def getIntersectionDescriptors(intersections,gray,windows):
         yMin1 = int(np.floor(windows[wndIdx][1]))
         yMax1 = int(np.floor(windows[wndIdx][3]))
         
-        if len(histImage[xMin1:xMax1,yMin1:yMax1]) != 0:
-            intersectionVoting[wndIdx] = sum(sum(histImage[int(np.floor(windows[wndIdx][0])):int(np.floor(windows[wndIdx][2])),int(np.floor(windows[wndIdx][1])):int(np.floor(windows[wndIdx][3]))]))
+        if len(histImage[yMin1:yMax1,xMin1:xMax1]) != 0:
+            intersectionVoting[wndIdx] = sum(sum(histImage[yMin1:yMax1,xMin1:xMax1]))
         else:
             intersectionVoting[wndIdx] = 0
     cv2.imwrite("histImage.jpg", histImage)
@@ -120,31 +125,40 @@ def getIntersectionDescriptors(intersections,gray,windows):
     
     return intersectionVoting
 
-def detectVanishingPoints(intersectionVoting, imgOrig, windows):
+def detectVanishingAreas(intersectionVoting, imgOrig, windows):
     
-    amIntVot = np.argmax(intersectionVoting)
+    #---------- new function ---------------------
+    winBest = []
+    maxVote = max(intersectionVoting)
+    maxValuesIdxs = intersectionVoting == maxVote
+    #print(intersectionVoting[maxValuesIdxs])
     
-    print(windows[amIntVot])
-    win = windows[amIntVot]
+    windowsNp = np.array(windows)
+    
+    #print(windowsNp[maxValuesIdxs])
+    
+    winIdxMax = windowsNp[maxValuesIdxs]
     
     cpwind = imgOrig.copy()
     
-    cpwind[int(win[0]):int(win[2]),int(win[1]):int(win[3]),0] = 255
-    cpwind[int(win[0]):int(win[2]),int(win[1]):int(win[3]),1] = 255
-    cpwind[int(win[0]):int(win[2]),int(win[1]):int(win[3]),2] = 255
-    cv2.imwrite("bestWin.jpg", cpwind)
+    for win in winIdxMax:
+        
+        cpwind[int(win[1]):int(win[3]),int(win[0]):int(win[2]),0] = 255
+        cpwind[int(win[1]):int(win[3]),int(win[0]):int(win[2]),1] = 0
+        cpwind[int(win[1]):int(win[3]),int(win[0]):int(win[2]),2] = 0
     
-    return win
+    cv2.imwrite("bestWin.jpg", cpwind)
+    #------------------------------------------
+    
+    return winBest
 
 
 if __name__ == '__main__':
     
-    img, gray, imgOrig = readImage('biblioteca.jpg')
+    img, gray, imgOrig = readImage('twoVanPnts.jpg')
     edges = preprocessing(gray)
     lines, data = detectLines(edges)
-    nClusters = 10
-    ret, label, center = clustering(data,nClusters)
-    intersections = detectIntersections(nClusters, label, center, data, lines, img, imgOrig)
+    intersections = detectIntersections(lines, img, imgOrig)
     windows = detectWindows(gray, intersections) 
     intersectionVoting = getIntersectionDescriptors(intersections, gray, windows)
-    win = detectVanishingPoints(intersectionVoting, imgOrig, windows)
+    win = detectVanishingAreas(intersectionVoting, imgOrig, windows)
