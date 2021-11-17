@@ -11,7 +11,6 @@ import math
         #4.1) find a good fitness function
     #5) Refactor required
     #6) Use dynamic programming to find the intersections
-    #7) Find a way to detect more than one Vanishing point
 
 def readImage(pathToImage):
     img = cv2.imread(pathToImage)
@@ -127,38 +126,51 @@ def getIntersectionDescriptors(intersections,gray,windows):
 
 def detectVanishingAreas(intersectionVoting, imgOrig, windows):
     
-    #---------- new function ---------------------
-    winBest = []
+    win = []
     maxVote = max(intersectionVoting)
     maxValuesIdxs = intersectionVoting == maxVote
-    #print(intersectionVoting[maxValuesIdxs])
     
     windowsNp = np.array(windows)
-    
-    #print(windowsNp[maxValuesIdxs])
-    
     winIdxMax = windowsNp[maxValuesIdxs]
     
     cpwind = imgOrig.copy()
     
-    for win in winIdxMax:
+    leastXmin = min(winIdxMax[:,0])
+    leastYmin = min(winIdxMax[:,1])
+    leastXmax = max(winIdxMax[:,2])
+    leastYmax = max(winIdxMax[:,3])
+    
+    
+    win = [leastXmin,leastYmin, leastXmax, leastYmax]
+    
+    cpwind[int(max(winIdxMax[:,1])):int(max(winIdxMax[:,3])),int(min(winIdxMax[:,0])):int(min(winIdxMax[:,2])),0] = 255
+    cpwind[int(max(winIdxMax[:,1])):int(max(winIdxMax[:,3])),int(min(winIdxMax[:,0])):int(min(winIdxMax[:,2])),1] = 255
+    cpwind[int(max(winIdxMax[:,1])):int(max(winIdxMax[:,3])),int(min(winIdxMax[:,0])):int(min(winIdxMax[:,2])),2] = 255
         
-        cpwind[int(win[1]):int(win[3]),int(win[0]):int(win[2]),0] = 255
-        cpwind[int(win[1]):int(win[3]),int(win[0]):int(win[2]),1] = 0
-        cpwind[int(win[1]):int(win[3]),int(win[0]):int(win[2]),2] = 0
-    
     cv2.imwrite("bestWin.jpg", cpwind)
-    #------------------------------------------
     
-    return winBest
+    return win
 
+def detectVanishingPoints(win,imgOrig,intersections):
+    relIntersections = []
+    cpwind = imgOrig.copy()
+    for inters in intersections:
+        if inters[0] > win[0] and inters[0] < win[2] and inters[1] > win[1] and inters[1] < win[3]:
+            relIntersections.append(inters)
+    
+    mean = np.mean(np.array(relIntersections), axis=0)
+    print(mean)
+    cpwind = cv2.circle(cpwind, (round(mean[0]),round(mean[1])), radius = 3, color = (255,255,0), thickness = -1)
+    cv2.imwrite("vanishingPoints.jpg", cpwind)
+    return mean
 
 if __name__ == '__main__':
     
-    img, gray, imgOrig = readImage('twoVanPnts.jpg')
+    img, gray, imgOrig = readImage('autostrada3.jpg')
     edges = preprocessing(gray)
     lines, data = detectLines(edges)
     intersections = detectIntersections(lines, img, imgOrig)
     windows = detectWindows(gray, intersections) 
     intersectionVoting = getIntersectionDescriptors(intersections, gray, windows)
     win = detectVanishingAreas(intersectionVoting, imgOrig, windows)
+    vnPnts = detectVanishingPoints(win, imgOrig, intersections)
